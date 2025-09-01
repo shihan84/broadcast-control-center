@@ -162,6 +162,14 @@ export function StreamManagement() {
   const [selectedOutput, setSelectedOutput] = useState<any>(null)
   const [outputConfig, setOutputConfig] = useState<OutputConfig>(getDefaultOutputConfig())
 
+  // State for creating new input stream
+  const [newStream, setNewStream] = useState({
+    name: '',
+    type: 'RTMP' as 'HLS' | 'RTMP' | 'SRT' | 'DASH',
+    url: '',
+    channelId: '1' // Default channel ID
+  })
+
   const [streamInputs, setStreamInputs] = useState([
     {
       id: '1',
@@ -494,6 +502,112 @@ export function StreamManagement() {
     }
   ]
 
+  // Function to create a new input stream
+  const createInputStream = async () => {
+    try {
+      // Validate input
+      if (!newStream.name.trim()) {
+        alert('Please enter a stream name')
+        return
+      }
+      
+      if (!newStream.url.trim()) {
+        alert('Please enter a stream URL')
+        return
+      }
+
+      // Basic URL validation
+      try {
+        new URL(newStream.url)
+      } catch {
+        alert('Please enter a valid URL')
+        return
+      }
+
+      // Create new stream object
+      const newInputStream = {
+        id: `input-${Date.now()}`,
+        name: newStream.name,
+        type: newStream.type,
+        url: newStream.url,
+        status: 'disconnected' as const,
+        bitrate: 0,
+        viewers: 0
+      }
+
+      // Add to state
+      setStreamInputs(prev => [...prev, newInputStream])
+
+      // Reset form
+      setNewStream({
+        name: '',
+        type: 'RTMP',
+        url: '',
+        channelId: '1'
+      })
+
+      // Close dialog
+      setIsCreateDialogOpen(false)
+
+      // Show success message
+      alert('Input stream created successfully!')
+    } catch (error) {
+      console.error('Error creating input stream:', error)
+      alert('Failed to create input stream')
+    }
+  }
+
+  // Function to start an input stream
+  const startInputStream = async (inputId: string) => {
+    try {
+      setStreamInputs(prev => prev.map(input => 
+        input.id === inputId 
+          ? { ...input, status: 'connecting' as const }
+          : input
+      ))
+
+      // Simulate connection delay
+      setTimeout(() => {
+        setStreamInputs(prev => prev.map(input => 
+          input.id === inputId 
+            ? { ...input, status: 'connected' as const, bitrate: Math.random() * 10 + 5, viewers: Math.floor(Math.random() * 1000) + 100 }
+            : input
+        ))
+      }, 2000)
+    } catch (error) {
+      console.error('Error starting input stream:', error)
+      setStreamInputs(prev => prev.map(input => 
+        input.id === inputId 
+          ? { ...input, status: 'error' as const }
+          : input
+      ))
+    }
+  }
+
+  // Function to stop an input stream
+  const stopInputStream = async (inputId: string) => {
+    try {
+      setStreamInputs(prev => prev.map(input => 
+        input.id === inputId 
+          ? { ...input, status: 'disconnected' as const, bitrate: 0, viewers: 0 }
+          : input
+      ))
+    } catch (error) {
+      console.error('Error stopping input stream:', error)
+    }
+  }
+
+  // Function to delete an input stream
+  const deleteInputStream = async (inputId: string) => {
+    try {
+      if (confirm('Are you sure you want to delete this input stream?')) {
+        setStreamInputs(prev => prev.filter(input => input.id !== inputId))
+      }
+    } catch (error) {
+      console.error('Error deleting input stream:', error)
+    }
+  }
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'connected':
@@ -596,54 +710,6 @@ export function StreamManagement() {
           <h2 className="text-2xl font-bold tracking-tight">Stream Management</h2>
           <p className="text-muted-foreground">Manage input sources and output destinations</p>
         </div>
-        <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="h-4 w-4 mr-2" />
-              Add Stream
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-md">
-            <DialogHeader>
-              <DialogTitle>Create New Stream</DialogTitle>
-              <DialogDescription>
-                Add a new input source or output destination
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div>
-                <Label htmlFor="stream-name">Stream Name</Label>
-                <Input id="stream-name" placeholder="Enter stream name" />
-              </div>
-              <div>
-                <Label htmlFor="stream-type">Stream Type</Label>
-                <Select>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select stream type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="rtmp">RTMP</SelectItem>
-                    <SelectItem value="hls">HLS</SelectItem>
-                    <SelectItem value="srt">SRT</SelectItem>
-                    <SelectItem value="dash">DASH</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label htmlFor="stream-url">Stream URL</Label>
-                <Input id="stream-url" placeholder="Enter stream URL" />
-              </div>
-              <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
-                  Cancel
-                </Button>
-                <Button onClick={() => setIsCreateDialogOpen(false)}>
-                  Create Stream
-                </Button>
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -655,8 +721,73 @@ export function StreamManagement() {
         <TabsContent value="inputs" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Stream Input Sources</CardTitle>
-              <CardDescription>Configure and manage your input streams (HLS/RTMP/SRT)</CardDescription>
+              <div className="flex justify-between items-center">
+                <div>
+                  <CardTitle>Stream Input Sources</CardTitle>
+                  <CardDescription>Configure and manage your input streams (HLS/RTMP/SRT)</CardDescription>
+                </div>
+                <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
+                  <DialogTrigger asChild>
+                    <Button>
+                      <Plus className="h-4 w-4 mr-2" />
+                      Add Input Stream
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent className="max-w-md">
+                    <DialogHeader>
+                      <DialogTitle>Create New Input Stream</DialogTitle>
+                      <DialogDescription>
+                        Add a new input source for your broadcast channel
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4">
+                      <div>
+                        <Label htmlFor="stream-name">Stream Name</Label>
+                        <Input 
+                          id="stream-name" 
+                          placeholder="Enter stream name"
+                          value={newStream.name}
+                          onChange={(e) => setNewStream(prev => ({ ...prev, name: e.target.value }))}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="stream-type">Stream Type</Label>
+                        <Select value={newStream.type} onValueChange={(value: any) => setNewStream(prev => ({ ...prev, type: value }))}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select stream type" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="RTMP">RTMP</SelectItem>
+                            <SelectItem value="HLS">HLS</SelectItem>
+                            <SelectItem value="SRT">SRT</SelectItem>
+                            <SelectItem value="DASH">DASH</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <Label htmlFor="stream-url">Stream URL</Label>
+                        <Input 
+                          id="stream-url" 
+                          placeholder="Enter stream URL"
+                          value={newStream.url}
+                          onChange={(e) => setNewStream(prev => ({ ...prev, url: e.target.value }))}
+                        />
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Examples: rtmp://server:1935/live/stream, srt://server:9000?streamid, https://cdn.example.com/stream.m3u8
+                        </p>
+                      </div>
+                      <div className="flex justify-end gap-2">
+                        <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
+                          Cancel
+                        </Button>
+                        <Button onClick={createInputStream}>
+                          Create Input Stream
+                        </Button>
+                      </div>
+                    </div>
+                  </DialogContent>
+                </Dialog>
+              </div>
             </CardHeader>
             <CardContent>
               <Table>
@@ -689,7 +820,12 @@ export function StreamManagement() {
                       <TableCell>{input.viewers.toLocaleString()}</TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
-                          <Button variant="ghost" size="sm">
+                          <Button 
+                            variant="ghost" 
+                            size="sm"
+                            onClick={() => input.status === 'connected' ? stopInputStream(input.id) : startInputStream(input.id)}
+                            disabled={input.status === 'connecting'}
+                          >
                             {input.status === 'connected' ? 
                               <Pause className="h-4 w-4" /> : 
                               <Play className="h-4 w-4" />
@@ -698,7 +834,11 @@ export function StreamManagement() {
                           <Button variant="ghost" size="sm">
                             <Settings className="h-4 w-4" />
                           </Button>
-                          <Button variant="ghost" size="sm">
+                          <Button 
+                            variant="ghost" 
+                            size="sm"
+                            onClick={() => deleteInputStream(input.id)}
+                          >
                             <Trash2 className="h-4 w-4" />
                           </Button>
                         </div>
