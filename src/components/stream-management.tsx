@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
@@ -35,8 +35,11 @@ import {
   Radio,
   Network,
   Key,
-  Clock
+  Clock,
+  WifiOff,
+  Loader2
 } from 'lucide-react'
+import { io, Socket } from 'socket.io-client'
 
 interface OutputConfig {
   // Basic Settings
@@ -161,6 +164,10 @@ export function StreamManagement() {
   const [isOutputConfigOpen, setIsOutputConfigOpen] = useState(false)
   const [selectedOutput, setSelectedOutput] = useState<any>(null)
   const [outputConfig, setOutputConfig] = useState<OutputConfig>(getDefaultOutputConfig())
+  
+  // WebSocket state
+  const [socket, setSocket] = useState<Socket | null>(null)
+  const [isConnected, setIsConnected] = useState(false)
 
   // State for creating new input stream
   const [newStream, setNewStream] = useState({
@@ -169,6 +176,16 @@ export function StreamManagement() {
     url: '',
     channelId: '1' // Default channel ID
   })
+
+  // State for creating new output stream
+  const [newOutput, setNewOutput] = useState({
+    name: '',
+    type: 'HLS' as 'HLS' | 'DASH' | 'SRT',
+    url: '',
+    channelId: '1' // Default channel ID
+  })
+
+  const [isCreateOutputDialogOpen, setIsCreateOutputDialogOpen] = useState(false)
 
   const [streamInputs, setStreamInputs] = useState([
     {
@@ -250,6 +267,90 @@ export function StreamManagement() {
       }
     }
   ])
+
+  // WebSocket connection effect
+  useEffect(() => {
+    // Initialize WebSocket connection
+    const newSocket = io(process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3000', {
+      transports: ['websocket', 'polling']
+    })
+
+    newSocket.on('connect', () => {
+      console.log('Connected to WebSocket server')
+      setIsConnected(true)
+    })
+
+    newSocket.on('disconnect', () => {
+      console.log('Disconnected from WebSocket server')
+      setIsConnected(false)
+    })
+
+    // Handle stream output updates
+    newSocket.on('output-started', (data) => {
+      console.log('Output started event received:', data)
+      setStreamOutputs(prev => prev.map(output => 
+        output.id === data.id 
+          ? { ...output, status: 'running' as const, bitrate: data.bitrate || 8.5, viewers: data.viewers || 1000 }
+          : output
+      ))
+    })
+
+    newSocket.on('output-stopped', (data) => {
+      console.log('Output stopped event received:', data)
+      setStreamOutputs(prev => prev.map(output => 
+        output.id === data.id 
+          ? { ...output, status: 'stopped' as const, bitrate: 0, viewers: 0 }
+          : output
+      ))
+    })
+
+    newSocket.on('output-error', (data) => {
+      console.error('Output error event received:', data)
+      setStreamOutputs(prev => prev.map(output => 
+        output.id === data.outputId 
+          ? { ...output, status: 'error' as const }
+          : output
+      ))
+      
+      // Show error to user
+      alert(`Output error: ${data.error || 'Unknown error'}`)
+    })
+
+    // Handle stream input updates
+    newSocket.on('input-started', (data) => {
+      console.log('Input started:', data)
+      setStreamInputs(prev => prev.map(input => 
+        input.id === data.id 
+          ? { ...input, status: 'connected' as const, bitrate: data.bitrate || 8.5, viewers: data.viewers || 100 }
+          : input
+      ))
+    })
+
+    newSocket.on('input-stopped', (data) => {
+      console.log('Input stopped:', data)
+      setStreamInputs(prev => prev.map(input => 
+        input.id === data.id 
+          ? { ...input, status: 'disconnected' as const, bitrate: 0, viewers: 0 }
+          : input
+      ))
+    })
+
+    newSocket.on('input-error', (data) => {
+      console.error('Input error:', data)
+      setStreamInputs(prev => prev.map(input => 
+        input.id === data.inputId 
+          ? { ...input, status: 'error' as const }
+          : input
+      ))
+    })
+
+    setSocket(newSocket)
+
+    // Cleanup on unmount
+    return () => {
+      newSocket.disconnect()
+    }
+  }, [])
 
   function getDefaultOutputConfig(): OutputConfig {
     return {
@@ -560,20 +661,21 @@ export function StreamManagement() {
   // Function to start an input stream
   const startInputStream = async (inputId: string) => {
     try {
+      if (!socket || !isConnected) {
+        throw new Error('WebSocket not connected')
+      }
+
+      // Update local state immediately
       setStreamInputs(prev => prev.map(input => 
         input.id === inputId 
           ? { ...input, status: 'connecting' as const }
           : input
       ))
 
-      // Simulate connection delay
-      setTimeout(() => {
-        setStreamInputs(prev => prev.map(input => 
-          input.id === inputId 
-            ? { ...input, status: 'connected' as const, bitrate: Math.random() * 10 + 5, viewers: Math.floor(Math.random() * 1000) + 100 }
-            : input
-        ))
-      }, 2000)
+      // Send start command via WebSocket
+      socket.emit('start-input', inputId)
+
+      console.log(`Start command sent for input: ${inputId}`)
     } catch (error) {
       console.error('Error starting input stream:', error)
       setStreamInputs(prev => prev.map(input => 
@@ -587,13 +689,28 @@ export function StreamManagement() {
   // Function to stop an input stream
   const stopInputStream = async (inputId: string) => {
     try {
+      if (!socket || !isConnected) {
+        throw new Error('WebSocket not connected')
+      }
+
+      // Update local state immediately
       setStreamInputs(prev => prev.map(input => 
         input.id === inputId 
-          ? { ...input, status: 'disconnected' as const, bitrate: 0, viewers: 0 }
+          ? { ...input, status: 'disconnecting' as const }
           : input
       ))
+
+      // Send stop command via WebSocket
+      socket.emit('stop-input', inputId)
+
+      console.log(`Stop command sent for input: ${inputId}`)
     } catch (error) {
       console.error('Error stopping input stream:', error)
+      setStreamInputs(prev => prev.map(input => 
+        input.id === inputId 
+          ? { ...input, status: 'error' as const }
+          : input
+      ))
     }
   }
 
@@ -605,6 +722,143 @@ export function StreamManagement() {
       }
     } catch (error) {
       console.error('Error deleting input stream:', error)
+    }
+  }
+
+  // Function to start an output stream
+  const startOutputStream = async (outputId: string) => {
+    try {
+      console.log('Starting output stream:', outputId)
+      
+      if (!socket || !isConnected) {
+        console.error('WebSocket not connected. Socket:', socket, 'Connected:', isConnected)
+        throw new Error('WebSocket not connected')
+      }
+
+      // Update local state immediately
+      setStreamOutputs(prev => prev.map(output => 
+        output.id === outputId 
+          ? { ...output, status: 'starting' as const }
+          : output
+      ))
+
+      // Send start command via WebSocket
+      console.log('Emitting start-output event for:', outputId)
+      socket.emit('start-output', outputId)
+
+      console.log(`Start command sent for output: ${outputId}`)
+    } catch (error) {
+      console.error('Error starting output stream:', error)
+      setStreamOutputs(prev => prev.map(output => 
+        output.id === outputId 
+          ? { ...output, status: 'error' as const }
+          : output
+      ))
+      
+      // Show error to user
+      alert(`Failed to start output: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
+  }
+
+  // Function to stop an output stream
+  const stopOutputStream = async (outputId: string) => {
+    try {
+      console.log('Stopping output stream:', outputId)
+      
+      if (!socket || !isConnected) {
+        console.error('WebSocket not connected. Socket:', socket, 'Connected:', isConnected)
+        throw new Error('WebSocket not connected')
+      }
+
+      // Update local state immediately
+      setStreamOutputs(prev => prev.map(output => 
+        output.id === outputId 
+          ? { ...output, status: 'stopping' as const }
+          : output
+      ))
+
+      // Send stop command via WebSocket
+      console.log('Emitting stop-output event for:', outputId)
+      socket.emit('stop-output', outputId)
+
+      console.log(`Stop command sent for output: ${outputId}`)
+    } catch (error) {
+      console.error('Error stopping output stream:', error)
+      setStreamOutputs(prev => prev.map(output => 
+        output.id === outputId 
+          ? { ...output, status: 'error' as const }
+          : output
+      ))
+      
+      // Show error to user
+      alert(`Failed to stop output: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
+  }
+
+  // Function to delete an output stream
+  const deleteOutputStream = async (outputId: string) => {
+    try {
+      if (confirm('Are you sure you want to delete this output stream?')) {
+        setStreamOutputs(prev => prev.filter(output => output.id !== outputId))
+      }
+    } catch (error) {
+      console.error('Error deleting output stream:', error)
+    }
+  }
+
+  // Function to create a new output stream
+  const createOutputStream = async () => {
+    try {
+      // Validate input
+      if (!newOutput.name.trim()) {
+        alert('Please enter an output name')
+        return
+      }
+      
+      if (!newOutput.url.trim()) {
+        alert('Please enter an output URL')
+        return
+      }
+
+      // Basic URL validation
+      try {
+        new URL(newOutput.url)
+      } catch {
+        alert('Please enter a valid URL')
+        return
+      }
+
+      // Create new output object
+      const newOutputStream = {
+        id: `output-${Date.now()}`,
+        name: newOutput.name,
+        type: newOutput.type,
+        url: newOutput.url,
+        status: 'stopped' as const,
+        bitrate: 0,
+        viewers: 0,
+        config: getDefaultOutputConfig()
+      }
+
+      // Add to state
+      setStreamOutputs(prev => [...prev, newOutputStream])
+
+      // Reset form
+      setNewOutput({
+        name: '',
+        type: 'HLS',
+        url: '',
+        channelId: '1'
+      })
+
+      // Close dialog
+      setIsCreateOutputDialogOpen(false)
+
+      // Show success message
+      alert('Output stream created successfully!')
+    } catch (error) {
+      console.error('Error creating output stream:', error)
+      alert('Failed to create output stream')
     }
   }
 
@@ -705,10 +959,33 @@ export function StreamManagement() {
 
   return (
     <div className="space-y-6">
+      {/* Connection Status Indicator */}
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold tracking-tight">Stream Management</h2>
           <p className="text-muted-foreground">Manage input sources and output destinations</p>
+        </div>
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+            <span className="text-sm text-muted-foreground">
+              {isConnected ? 'WebSocket Connected' : 'WebSocket Disconnected'}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost" 
+              size="sm"
+              onClick={() => {
+                if (socket) {
+                  socket.disconnect()
+                  socket.connect()
+                }
+              }}
+            >
+              Reconnect
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -824,12 +1101,15 @@ export function StreamManagement() {
                             variant="ghost" 
                             size="sm"
                             onClick={() => input.status === 'connected' ? stopInputStream(input.id) : startInputStream(input.id)}
-                            disabled={input.status === 'connecting'}
+                            disabled={input.status === 'connecting' || input.status === 'disconnecting' || !isConnected}
                           >
-                            {input.status === 'connected' ? 
-                              <Pause className="h-4 w-4" /> : 
+                            {input.status === 'connecting' || input.status === 'disconnecting' ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : input.status === 'connected' ? (
+                              <Pause className="h-4 w-4" />
+                            ) : (
                               <Play className="h-4 w-4" />
-                            }
+                            )}
                           </Button>
                           <Button variant="ghost" size="sm">
                             <Settings className="h-4 w-4" />
@@ -854,19 +1134,80 @@ export function StreamManagement() {
         <TabsContent value="outputs" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Stream Output Destinations</CardTitle>
-              <CardDescription>Manage your output streams to CDNs and platforms (HLS/DASH/SRT)</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="flex justify-between items-center mb-4">
+              <div className="flex justify-between items-center">
+                <div>
+                  <CardTitle>Stream Output Destinations</CardTitle>
+                  <CardDescription>Manage your output streams to CDNs and platforms (HLS/DASH/SRT)</CardDescription>
+                </div>
                 <div className="flex gap-2">
+                  <Dialog open={isCreateOutputDialogOpen} onOpenChange={setIsCreateOutputDialogOpen}>
+                    <DialogTrigger asChild>
+                      <Button>
+                        <Plus className="h-4 w-4 mr-2" />
+                        Add Output Stream
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent className="max-w-md">
+                      <DialogHeader>
+                        <DialogTitle>Create New Output Stream</DialogTitle>
+                        <DialogDescription>
+                          Add a new output destination for your broadcast channel
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div className="space-y-4">
+                        <div>
+                          <Label htmlFor="output-name">Output Name</Label>
+                          <Input 
+                            id="output-name" 
+                            placeholder="Enter output name"
+                            value={newOutput.name}
+                            onChange={(e) => setNewOutput(prev => ({ ...prev, name: e.target.value }))}
+                          />
+                        </div>
+                        <div>
+                          <Label htmlFor="output-type">Output Type</Label>
+                          <Select value={newOutput.type} onValueChange={(value: any) => setNewOutput(prev => ({ ...prev, type: value }))}>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select output type" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="HLS">HLS</SelectItem>
+                              <SelectItem value="DASH">DASH</SelectItem>
+                              <SelectItem value="SRT">SRT</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div>
+                          <Label htmlFor="output-url">Output URL</Label>
+                          <Input 
+                            id="output-url" 
+                            placeholder="Enter output URL"
+                            value={newOutput.url}
+                            onChange={(e) => setNewOutput(prev => ({ ...prev, url: e.target.value }))}
+                          />
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Examples: https://cdn.example.com/out/stream.m3u8, srt://cdn:9000?output, https://cdn.example.com/stream/manifest.mpd
+                          </p>
+                        </div>
+                        <div className="flex justify-end gap-2">
+                          <Button variant="outline" onClick={() => setIsCreateOutputDialogOpen(false)}>
+                            Cancel
+                          </Button>
+                          <Button onClick={createOutputStream}>
+                            Create Output Stream
+                          </Button>
+                        </div>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
                   <Button onClick={() => handleOutputConfig()}>
                     <Plus className="h-4 w-4 mr-2" />
-                    New Output
+                    Advanced Output
                   </Button>
                 </div>
               </div>
-              
+            </CardHeader>
+            <CardContent>
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -899,11 +1240,19 @@ export function StreamManagement() {
                       <TableCell>{output.viewers.toLocaleString()}</TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
-                          <Button variant="ghost" size="sm">
-                            {output.status === 'running' ? 
-                              <Square className="h-4 w-4" /> : 
+                          <Button 
+                            variant="ghost" 
+                            size="sm"
+                            onClick={() => output.status === 'running' ? stopOutputStream(output.id) : startOutputStream(output.id)}
+                            disabled={output.status === 'starting' || output.status === 'stopping' || !isConnected}
+                          >
+                            {output.status === 'starting' || output.status === 'stopping' ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : output.status === 'running' ? (
+                              <Square className="h-4 w-4" />
+                            ) : (
                               <Play className="h-4 w-4" />
-                            }
+                            )}
                           </Button>
                           <Button 
                             variant="ghost" 
@@ -912,7 +1261,11 @@ export function StreamManagement() {
                           >
                             <Settings className="h-4 w-4" />
                           </Button>
-                          <Button variant="ghost" size="sm">
+                          <Button 
+                            variant="ghost" 
+                            size="sm"
+                            onClick={() => deleteOutputStream(output.id)}
+                          >
                             <Trash2 className="h-4 w-4" />
                           </Button>
                         </div>
