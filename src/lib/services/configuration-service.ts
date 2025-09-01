@@ -792,4 +792,100 @@ export class ConfigurationService {
       throw error
     }
   }
+
+  generateFFmpegCommandFromConfig(config: any): string {
+    try {
+      const { input, output, transcoding } = config
+      
+      if (!input || !output) {
+        throw new Error('Both input and output configurations are required')
+      }
+
+      const mpegtsConfig = output.mpegts || {
+        mpegts_flags: ['pat_pmt_at_frames'],
+        mpegts_service_id: 1,
+        mpegts_pid_video: 512,
+        mpegts_pid_audio: 513,
+        mpegts_pid_scte35: 514,
+        mpegts_pcr_period: 20,
+        mpegts_pat_period: 100,
+        mpegts_sdt_period: 500,
+        mpegts_nit_period: 500
+      }
+      
+      return this.generateFFmpegCommandInternal(
+        input.url,
+        output.url,
+        mpegtsConfig,
+        transcoding
+      )
+    } catch (error) {
+      console.error('Error generating FFmpeg command from config:', error)
+      throw error
+    }
+  }
+
+  private generateFFmpegCommandInternal(
+    inputUrl: string,
+    outputUrl: string,
+    mpegtsConfig: any,
+    transcoding?: any
+  ): string {
+    const commandParts: string[] = ['ffmpeg']
+    
+    // Input configuration
+    commandParts.push('-i', inputUrl)
+    
+    // Transcoding options
+    if (transcoding?.enabled) {
+      if (transcoding.codec) {
+        commandParts.push('-c:v', transcoding.codec)
+      }
+      if (transcoding.bitrate) {
+        commandParts.push('-b:v', `${transcoding.bitrate}k`)
+      }
+      if (transcoding.resolution) {
+        commandParts.push('-s', transcoding.resolution)
+      }
+      if (transcoding.framerate) {
+        commandParts.push('-r', transcoding.framerate.toString())
+      }
+    }
+    
+    // MPEG-TS options
+    if (mpegtsConfig) {
+      if (mpegtsConfig.mpegts_flags) {
+        commandParts.push('-mpegts_flags', mpegtsConfig.mpegts_flags.join(','))
+      }
+      if (mpegtsConfig.mpegts_service_id) {
+        commandParts.push('-mpegts_service_id', mpegtsConfig.mpegts_service_id.toString())
+      }
+      if (mpegtsConfig.mpegts_pid_video) {
+        commandParts.push('-mpegts_pid_video', mpegtsConfig.mpegts_pid_video.toString())
+      }
+      if (mpegtsConfig.mpegts_pid_audio) {
+        commandParts.push('-mpegts_pid_audio', mpegtsConfig.mpegts_pid_audio.toString())
+      }
+      if (mpegtsConfig.mpegts_pid_scte35) {
+        commandParts.push('-mpegts_pid_scte35', mpegtsConfig.mpegts_pid_scte35.toString())
+      }
+      if (mpegtsConfig.mpegts_pcr_period) {
+        commandParts.push('-mpegts_pcr_period', mpegtsConfig.mpegts_pcr_period.toString())
+      }
+      if (mpegtsConfig.mpegts_pat_period) {
+        commandParts.push('-mpegts_pat_period', mpegtsConfig.mpegts_pat_period.toString())
+      }
+      if (mpegtsConfig.mpegts_sdt_period) {
+        commandParts.push('-mpegts_sdt_period', mpegtsConfig.mpegts_sdt_period.toString())
+      }
+      if (mpegtsConfig.mpegts_nit_period) {
+        commandParts.push('-mpegts_nit_period', mpegtsConfig.mpegts_nit_period.toString())
+      }
+    }
+    
+    // Output
+    commandParts.push('-f', 'mpegts', outputUrl)
+    
+    return commandParts.join(' ')
+  }
 }

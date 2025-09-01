@@ -4,17 +4,23 @@ import { ConfigurationService } from '@/lib/services/configuration-service'
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { configId } = body
+    const { configId, config } = body
 
-    if (!configId) {
+    const configService = ConfigurationService.getInstance()
+    let command
+
+    if (configId) {
+      // Generate command from existing configuration
+      command = await configService.generateFFmpegCommand(configId)
+    } else if (config) {
+      // Generate command from provided configuration
+      command = configService.generateFFmpegCommandFromConfig(config)
+    } else {
       return NextResponse.json(
-        { error: 'Configuration ID is required' },
+        { error: 'Configuration ID or config data is required' },
         { status: 400 }
       )
     }
-
-    const configService = ConfigurationService.getInstance()
-    const command = await configService.generateFFmpegCommand(configId)
 
     return NextResponse.json({ command })
   } catch (error) {
