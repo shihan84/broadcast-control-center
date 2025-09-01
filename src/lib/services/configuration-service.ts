@@ -1,4 +1,5 @@
 import { db } from '@/lib/db'
+import { MPEGTSConfig, MPEGTS_PRESETS, generateFFmpegCommand } from './mpegts-config'
 
 export interface StreamConfiguration {
   id?: string
@@ -12,24 +13,32 @@ export interface StreamConfiguration {
       redundancy?: number
     }
     output?: {
-      type: 'HLS' | 'DASH' | 'SRT'
+      type: 'HLS' | 'DASH' | 'SRT' | 'MPEGTS'
       url: string
       bitrate?: number
       resolution?: string
       framerate?: number
       codec?: string
       keyFrameInterval?: number
+      mpegts?: MPEGTSConfig
     }
     transcoding?: {
       enabled: boolean
       profile?: string
       preset?: string
       tune?: string
+      crf?: number
+      bitrate?: number
+      maxrate?: number
+      bufsize?: number
+      pix_fmt?: string
     }
     scte35?: {
       enabled: boolean
       passthrough: boolean
       insertEvents: boolean
+      pid?: number
+      mode?: 'passthrough' | 'insert' | 'extract'
     }
     monitoring?: {
       enabled: boolean
@@ -291,8 +300,8 @@ export class ConfigurationService {
     }
 
     if (output) {
-      if (!output.type || !['HLS', 'DASH', 'SRT'].includes(output.type)) {
-        errors.push('Valid output type is required (HLS, DASH, SRT)')
+      if (!output.type || !['HLS', 'DASH', 'SRT', 'MPEGTS'].includes(output.type)) {
+        errors.push('Valid output type is required (HLS, DASH, SRT, MPEGTS)')
       }
 
       if (!output.url || output.url.trim() === '') {
@@ -303,6 +312,23 @@ export class ConfigurationService {
         new URL(output.url)
       } catch {
         errors.push('Invalid output URL format')
+      }
+
+      // Validate MPEGTS configuration if present
+      if (output.type === 'MPEGTS' && output.mpegts) {
+        const mpegts = output.mpegts
+        if (mpegts.mpegts_service_id !== undefined && (mpegts.mpegts_service_id < 1 || mpegts.mpegts_service_id > 65535)) {
+          errors.push('MPEG-TS service ID must be between 1 and 65535')
+        }
+        if (mpegts.mpegts_pid_video !== undefined && (mpegts.mpegts_pid_video < 16 || mpegts.mpegts_pid_video > 8190)) {
+          errors.push('MPEG-TS video PID must be between 16 and 8190')
+        }
+        if (mpegts.mpegts_pid_audio !== undefined && (mpegts.mpegts_pid_audio < 16 || mpegts.mpegts_pid_audio > 8190)) {
+          errors.push('MPEG-TS audio PID must be between 16 and 8190')
+        }
+        if (mpegts.mpegts_pid_scte35 !== undefined && (mpegts.mpegts_pid_scte35 < 16 || mpegts.mpegts_pid_scte35 > 8190)) {
+          errors.push('MPEG-TS SCTE-35 PID must be between 16 and 8190')
+        }
       }
     }
 
@@ -525,12 +551,244 @@ export class ConfigurationService {
               }
             }
           }
+        },
+        {
+          id: 'mpegts-broadcast',
+          name: 'MPEG-TS Broadcast',
+          description: 'Professional MPEG-TS output with SCTE-35 support',
+          config: {
+            input: {
+              type: 'RTMP',
+              url: '',
+              bufferSize: 1024,
+              latency: 1000,
+              redundancy: 1
+            },
+            output: {
+              type: 'MPEGTS',
+              url: '',
+              bitrate: 8000,
+              resolution: '1920x1080',
+              framerate: 30,
+              codec: 'h264',
+              keyFrameInterval: 2,
+              mpegts: MPEGTS_PRESETS.standard_broadcast()
+            },
+            transcoding: {
+              enabled: true,
+              profile: 'high',
+              preset: 'fast',
+              tune: 'zerolatency',
+              bitrate: 8000,
+              maxrate: 8500,
+              bufsize: 16000
+            },
+            scte35: {
+              enabled: true,
+              passthrough: true,
+              insertEvents: true,
+              pid: 500,
+              mode: 'passthrough'
+            },
+            monitoring: {
+              enabled: true,
+              metrics: ['BITRATE', 'FRAMERATE', 'LATENCY', 'DROPPED_FRAMES', 'CPU_USAGE'],
+              alertThresholds: {
+                cpu: 80,
+                memory: 85,
+                network: 90,
+                bitrate: 10000,
+                latency: 2000
+              }
+            }
+          }
+        },
+        {
+          id: 'mpegts-cable-headend',
+          name: 'Cable Headend MPEG-TS',
+          description: 'Cable headend compatible MPEG-TS with standard PIDs',
+          config: {
+            input: {
+              type: 'SRT',
+              url: '',
+              bufferSize: 2048,
+              latency: 2000,
+              redundancy: 2
+            },
+            output: {
+              type: 'MPEGTS',
+              url: '',
+              bitrate: 12000,
+              resolution: '1920x1080',
+              framerate: 29.97,
+              codec: 'h264',
+              keyFrameInterval: 15,
+              mpegts: MPEGTS_PRESETS.cable_headend()
+            },
+            transcoding: {
+              enabled: true,
+              profile: 'high',
+              preset: 'medium',
+              tune: 'broadcast',
+              bitrate: 12000,
+              maxrate: 12500,
+              bufsize: 24000
+            },
+            scte35: {
+              enabled: true,
+              passthrough: true,
+              insertEvents: true,
+              pid: 500,
+              mode: 'insert'
+            },
+            monitoring: {
+              enabled: true,
+              metrics: ['BITRATE', 'FRAMERATE', 'LATENCY', 'DROPPED_FRAMES', 'CPU_USAGE', 'MEMORY_USAGE'],
+              alertThresholds: {
+                cpu: 75,
+                memory: 80,
+                network: 85,
+                bitrate: 15000,
+                latency: 1500
+              }
+            }
+          }
+        },
+        {
+          id: 'mpegts-iptv',
+          name: 'IPTV MPEG-TS',
+          description: 'IPTV optimized MPEG-TS with aligned timestamps',
+          config: {
+            input: {
+              type: 'HLS',
+              url: '',
+              bufferSize: 1024,
+              latency: 3000
+            },
+            output: {
+              type: 'MPEGTS',
+              url: '',
+              bitrate: 6000,
+              resolution: '1280x720',
+              framerate: 30,
+              codec: 'h264',
+              keyFrameInterval: 2,
+              mpegts: MPEGTS_PRESETS.iptv()
+            },
+            transcoding: {
+              enabled: true,
+              profile: 'main',
+              preset: 'fast',
+              tune: 'zerolatency',
+              bitrate: 6000,
+              maxrate: 6500,
+              bufsize: 12000
+            },
+            scte35: {
+              enabled: true,
+              passthrough: true,
+              insertEvents: true,
+              pid: 500,
+              mode: 'insert'
+            },
+            monitoring: {
+              enabled: true,
+              metrics: ['BITRATE', 'FRAMERATE', 'LATENCY', 'NETWORK_THROUGHPUT'],
+              alertThresholds: {
+                cpu: 70,
+                memory: 75,
+                network: 80,
+                bitrate: 8000,
+                latency: 1000
+              }
+            }
+          }
+        },
+        {
+          id: 'mpegts-high-availability',
+          name: 'High Availability MPEG-TS',
+          description: 'Redundant MPEG-TS with error resilience',
+          config: {
+            input: {
+              type: 'RTMP',
+              url: '',
+              bufferSize: 2048,
+              latency: 1000,
+              redundancy: 2
+            },
+            output: {
+              type: 'MPEGTS',
+              url: '',
+              bitrate: 10000,
+              resolution: '1920x1080',
+              framerate: 30,
+              codec: 'h264',
+              keyFrameInterval: 1,
+              mpegts: MPEGTS_PRESETS.high_availability()
+            },
+            transcoding: {
+              enabled: true,
+              profile: 'high',
+              preset: 'fast',
+              tune: 'zerolatency',
+              bitrate: 10000,
+              maxrate: 10500,
+              bufsize: 20000
+            },
+            scte35: {
+              enabled: true,
+              passthrough: true,
+              insertEvents: true,
+              pid: 500,
+              mode: 'insert'
+            },
+            monitoring: {
+              enabled: true,
+              metrics: ['BITRATE', 'FRAMERATE', 'LATENCY', 'DROPPED_FRAMES', 'CPU_USAGE', 'MEMORY_USAGE', 'NETWORK_THROUGHPUT'],
+              alertThresholds: {
+                cpu: 85,
+                memory: 90,
+                network: 95,
+                bitrate: 12000,
+                latency: 1500
+              }
+            }
+          }
         }
       ]
 
       return templates
     } catch (error) {
       console.error('Error getting configuration templates:', error)
+      throw error
+    }
+  }
+
+  async generateFFmpegCommand(configId: string) {
+    try {
+      const config = await this.getConfiguration(configId)
+      const configData = JSON.parse(config.config)
+
+      if (!configData.output || configData.output.type !== 'MPEGTS') {
+        throw new Error('FFmpeg command generation only supported for MPEG-TS outputs')
+      }
+
+      const { input, output, transcoding } = configData
+      
+      if (!input || !output) {
+        throw new Error('Both input and output configurations are required')
+      }
+
+      const mpegtsConfig = output.mpegts || MPEGTS_PRESETS.standard_broadcast()
+      
+      return generateFFmpegCommand(
+        input.url,
+        output.url,
+        mpegtsConfig,
+        transcoding
+      )
+    } catch (error) {
+      console.error('Error generating FFmpeg command:', error)
       throw error
     }
   }
