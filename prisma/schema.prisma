@@ -1,0 +1,217 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  role      UserRole @default(VIEWER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  broadcastChannels BroadcastChannel[]
+  streamConfigs     StreamConfig[]
+  scte35Events      SCTE35Event[]
+  monitoringData    MonitoringData[]
+
+  @@map("users")
+}
+
+model BroadcastChannel {
+  id          String      @id @default(cuid())
+  name        String
+  description String?
+  status      ChannelStatus @default(OFFLINE)
+  thumbnail   String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  // Relations
+  userId      String
+  user        User        @relation(fields: [userId], references: [id])
+  streamInputs StreamInput[]
+  streamOutputs StreamOutput[]
+  scte35Events SCTE35Event[]
+  monitoringData MonitoringData[]
+
+  @@map("broadcast_channels")
+}
+
+model StreamInput {
+  id          String      @id @default(cuid())
+  name        String
+  type        StreamType
+  url         String
+  status      InputStatus @default(DISCONNECTED)
+  config      String      // JSON configuration
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  // Relations
+  channelId   String
+  channel     BroadcastChannel @relation(fields: [channelId], references: [id])
+
+  @@map("stream_inputs")
+}
+
+model StreamOutput {
+  id          String       @id @default(cuid())
+  name        String
+  type        StreamType
+  url         String
+  status      OutputStatus @default(STOPPED)
+  config      String       // JSON configuration
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  // Relations
+  channelId   String
+  channel     BroadcastChannel @relation(fields: [channelId], references: [id])
+
+  @@map("stream_outputs")
+}
+
+model SCTE35Event {
+  id          String        @id @default(cuid())
+  eventId     String
+  eventType   SCTE35EventType
+  startTime   DateTime
+  duration    Int?          // Duration in seconds
+  command     String        // SCTE-35 command data
+  description String?
+  status      EventStatus   @default(SCHEDULED)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  // Relations
+  channelId   String
+  channel     BroadcastChannel @relation(fields: [channelId], references: [id])
+  userId      String?
+  user        User?         @relation(fields: [userId], references: [id])
+
+  @@map("scte35_events")
+}
+
+model StreamConfig {
+  id          String   @id @default(cuid())
+  name        String
+  config      String   // JSON configuration
+  isActive    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+
+  @@map("stream_configs")
+}
+
+model MonitoringData {
+  id          String   @id @default(cuid())
+  metricType  MetricType
+  value       Float
+  timestamp   DateTime @default(now())
+  metadata    String?  // JSON metadata
+
+  // Relations
+  channelId   String?
+  channel     BroadcastChannel? @relation(fields: [channelId], references: [id])
+  userId      String?
+  user        User?             @relation(fields: [userId], references: [id])
+
+  @@map("monitoring_data")
+}
+
+model SystemSettings {
+  id            String   @id @default(cuid())
+  systemConfig  String   // JSON configuration for system settings
+  streamConfig  String   // JSON configuration for stream settings
+  networkConfig String   // JSON configuration for network settings
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("system_settings")
+}
+
+// Enums
+enum UserRole {
+  VIEWER
+  OPERATOR
+  ADMIN
+}
+
+enum ChannelStatus {
+  OFFLINE
+  STARTING
+  ONLINE
+  STOPPING
+  ERROR
+}
+
+enum StreamType {
+  HLS
+  RTMP
+  SRT
+  DASH
+}
+
+enum InputStatus {
+  DISCONNECTED
+  CONNECTING
+  CONNECTED
+  ERROR
+}
+
+enum OutputStatus {
+  STOPPED
+  STARTING
+  RUNNING
+  STOPPING
+  ERROR
+}
+
+enum SCTE35EventType {
+  PROGRAM_START
+  PROGRAM_END
+  COMMERCIAL_START
+  COMMERCIAL_END
+  PROVIDER_AD_START
+  PROVIDER_AD_END
+  BREAK_START
+  BREAK_END
+  CUSTOM
+}
+
+enum EventStatus {
+  SCHEDULED
+  RUNNING
+  COMPLETED
+  CANCELLED
+  ERROR
+}
+
+enum MetricType {
+  BITRATE
+  FRAMERATE
+  RESOLUTION
+  DROPPED_FRAMES
+  CPU_USAGE
+  MEMORY_USAGE
+  NETWORK_THROUGHPUT
+  LATENCY
+  UPTIME
+}
