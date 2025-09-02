@@ -947,13 +947,14 @@ export class StreamingService {
         throw new Error('FFmpeg is not installed or not available in PATH')
       }
 
-      // Start real FFmpeg process
+      // Start real FFmpeg process with distributor compliance
       const ffmpegProcess = await this.ffmpegService.startStream(
         outputId,
         inputUrl,
         output.url,
         config,
-        'output'
+        'output',
+        true // Use distributor-compliant mode
       )
 
       // Store active stream reference

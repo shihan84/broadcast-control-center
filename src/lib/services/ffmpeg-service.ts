@@ -12,6 +12,7 @@ export interface FFmpegProcess {
   status: 'starting' | 'running' | 'stopping' | 'stopped' | 'error'
   error?: string
   isSimulation?: boolean
+  useDistributorCompliance?: boolean
 }
 
 export class FFmpegService extends EventEmitter {
@@ -108,7 +109,8 @@ export class FFmpegService extends EventEmitter {
     inputUrl: string,
     outputUrl: string,
     config: StreamConfig,
-    type: 'input' | 'output'
+    type: 'input' | 'output',
+    useDistributorCompliance: boolean = false
   ): Promise<FFmpegProcess> {
     try {
       // Check if service is properly initialized
@@ -125,7 +127,14 @@ export class FFmpegService extends EventEmitter {
       }
 
       // Generate FFmpeg command based on configuration
-      const command = this.buildFFmpegCommand(inputUrl, outputUrl, config, type)
+      let command: string
+      if (useDistributorCompliance && type === 'output') {
+        command = this.buildDistributorCompliantCommand(inputUrl, outputUrl, config)
+        console.log(`Using DISTRIBUTOR-COMPLIANT FFmpeg command for ${type} ${streamId}`)
+      } else {
+        command = this.buildFFmpegCommand(inputUrl, outputUrl, config, type)
+        console.log(`Using standard FFmpeg command for ${type} ${streamId}`)
+      }
       
       console.log(`Starting ${this.simulationMode ? 'SIMULATED ' : ''}FFmpeg process for ${type} ${streamId}:`)
       console.log(`Using FFmpeg path: ${this.ffmpegPath}`)
@@ -149,7 +158,8 @@ export class FFmpegService extends EventEmitter {
           startTime: new Date(),
           config,
           status: 'starting',
-          isSimulation: false
+          isSimulation: false,
+          useDistributorCompliance
         }
 
         // Handle real process events
@@ -363,6 +373,84 @@ export class FFmpegService extends EventEmitter {
 
     // Output options
     command += this.buildOutputOptions(config, outputUrl)
+
+    return command.trim()
+  }
+
+  // Generate distributor-compliant FFmpeg command
+  buildDistributorCompliantCommand(
+    inputUrl: string,
+    outputUrl: string,
+    config: StreamConfig
+  ): string {
+    let command = ''
+
+    // Global options
+    command += '-y '
+    command += '-loglevel warning '
+    command += '-thread_queue_size 1024 '
+
+    // Input options
+    command += '-reconnect 1 '
+    command += '-reconnect_at_eof 1 '
+    command += '-reconnect_streamed 1 '
+    command += '-reconnect_delay_max 30 '
+    command += `-i "${inputUrl}" `
+
+    // Video codec and settings (exactly matching distributor requirements)
+    command += '-c:v libx264 '
+    command += '-profile:v high '
+    command += '-level 40 '
+    command += '-pix_fmt yuv420p '
+    command += '-s 1920x1080 '
+    command += '-r 25 '
+    command += '-g 50 ' // 25fps * 2 seconds = 50 frames
+    command += '-b:v 5000k '
+    command += '-maxrate 5000k '
+    command += '-bufsize 10000k '
+    command += '-colorspace bt709 '
+    command += '-color_primaries bt709 '
+    command += '-color_trc bt709 '
+    command += '-color_range tv '
+    command += '-movflags +faststart '
+
+    // Audio codec and settings (exactly matching distributor requirements)
+    command += '-c:a aac '
+    command += '-profile:a aac_low '
+    command += '-b:a 128k '
+    command += '-ar 48000 '
+    command += '-ac 2 '
+
+    // MPEG-TS container with specific settings
+    command += '-f mpegts '
+    command += '-mpegts_original_network_id 1 '
+    command += '-mpegts_transport_stream_id 1 '
+    command += '-mpegts_service_id 1 '
+
+    // PID assignments (exactly matching distributor requirements)
+    command += '-mpegts_pmt_video_pid 101 '
+    command += '-mpegts_pid_video 101 '
+    command += '-mpegts_pmt_audio_pid 102 '
+    command += '-mpegts_pid_audio 102 '
+    command += '-mpegts_pmt_scte35_pid 500 '
+    command += '-mpegts_pid_scte35 500 '
+    command += '-mpegts_pmt_pmt_pid 1000 '
+    command += '-mpegts_pmt_pcr_pid 101 '
+
+    // SCTE-35 enablement
+    command += '-scte35 1 '
+
+    // Stream metadata (exactly matching distributor requirements)
+    command += '-metadata:s:0 language=eng '
+    command += '-metadata:s:1 language=eng '
+    command += '-metadata:s:2 language=eng '
+    command += '-metadata:s:0 pid=101 '
+    command += '-metadata:s:1 pid=102 '
+    command += '-metadata:s:2 pid=500 '
+    command += '-metadata:s:2 stream_type=0x86 '
+
+    // Output URL
+    command += `"${outputUrl}"`
 
     return command.trim()
   }
