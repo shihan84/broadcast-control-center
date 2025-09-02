@@ -435,6 +435,26 @@ export const MPEGTS_PRESETS = {
     .withCopyTS(true)
     .withResendHeaders(true)
     .withAlignTS(true)
+    .build(),
+
+  // DISTRIBUTOR COMPLIANT CONFIGURATION - EXACT MATCH TO PROVIDED JSON
+  distributor_compliant: () => MPEGTSConfigBuilder.create()
+    .withFlags(['resend_headers'])
+    .withServiceId(1)
+    .withVideoPID(101)      // Exact match to distributor JSON
+    .withAudioPID(102)      // Exact match to distributor JSON
+    .withSCTE35PID(500)    // Exact match to distributor JSON
+    .withPMTPID(1000)      // Exact match to distributor JSON
+    .withPATPID(0)         // Exact match to distributor JSON
+    .withOriginalNetworkId(1)
+    .withTransportStreamId(1)
+    .withServiceType(1)
+    .withPCRPeriod(20)
+    .withPATPeriod(100)
+    .withSDTPeriod(1000)
+    .withSCTE35Mode('passthrough')
+    .withCopyTS(true)
+    .withResendHeaders(true)
     .build()
 }
 

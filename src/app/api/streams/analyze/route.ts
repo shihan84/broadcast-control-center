@@ -24,20 +24,18 @@ export async function POST(request: NextRequest) {
     }
 
     const analysisService = StreamAnalysisService.getInstance()
-    const validation = await analysisService.validateAgainstDistributorRequirements(streamUrl)
+    const analysis = await analysisService.analyzeStream(streamUrl)
 
     return NextResponse.json({
       success: true,
-      validation,
-      message: validation.isValid 
-        ? 'Stream is fully compliant with distributor requirements'
-        : 'Stream has compliance issues that need to be addressed'
+      analysis,
+      message: 'Stream analysis completed successfully'
     })
   } catch (error) {
-    console.error('Error validating stream:', error)
+    console.error('Error analyzing stream:', error)
     return NextResponse.json(
       { 
-        error: 'Failed to validate stream',
+        error: 'Failed to analyze stream',
         details: error instanceof Error ? error.message : 'Unknown error'
       },
       { status: 500 }
